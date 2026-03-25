@@ -11,6 +11,7 @@ from poker_solver.range_parser import parse_range, hand_to_str
 from poker_solver.utils import abstract_hand_name, history_label
 from poker_solver.cfr import CFRSolver
 from poker_solver_ui.range_selector import RangeSelector
+from poker_solver_ui.board_selector import BoardSelector
 
 
 class App(tk.Tk):
@@ -54,6 +55,10 @@ class App(tk.Tk):
                 btn = ttk.Button(params, text="...",  width=3,
                                  command=lambda k=key: self._open_range_selector(k))
                 btn.grid(row=row, column=2, padx=(2, 0), pady=2)
+            elif key == "board":
+                btn = ttk.Button(params, text="...", width=3,
+                                 command=self._open_board_selector)
+                btn.grid(row=row, column=2, padx=(2, 0), pady=2)
             row += 1
 
         params.columnconfigure(1, weight=1)
@@ -76,6 +81,14 @@ class App(tk.Tk):
         self._ip_text = scrolledtext.ScrolledText(nb, font=("Consolas", 10), state="disabled")
         nb.add(self._oop_text, text="OOP Strategy")
         nb.add(self._ip_text, text="IP Strategy")
+
+    # ── Board selector ──
+
+    def _open_board_selector(self):
+        current = self._entries["board"].get().strip()
+        dialog = BoardSelector(self, current)
+        if dialog.result is not None:
+            self._entries["board"].set(dialog.result)
 
     # ── Range selector ──
 

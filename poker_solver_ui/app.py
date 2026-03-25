@@ -12,13 +12,14 @@ from poker_solver.utils import abstract_hand_name, history_label
 from poker_solver.cfr import CFRSolver
 from poker_solver_ui.range_selector import RangeSelector
 from poker_solver_ui.board_selector import BoardSelector
+from poker_solver_ui.strategy_viewer import StrategyViewer
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Poker Solver")
-        self.geometry("820x660")
+        self.geometry("960x780")
         self.resizable(True, True)
 
         self._solver = None
@@ -73,14 +74,18 @@ class App(tk.Tk):
         self._progress = ttk.Label(btn_frame, text="")
         self._progress.pack(side="left", padx=8)
 
-        # Results notebook with OOP / IP tabs
+        # Results notebook with visual + text tabs
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
+        self._oop_viewer = StrategyViewer(nb)
+        self._ip_viewer = StrategyViewer(nb)
         self._oop_text = scrolledtext.ScrolledText(nb, font=("Consolas", 10), state="disabled")
         self._ip_text = scrolledtext.ScrolledText(nb, font=("Consolas", 10), state="disabled")
-        nb.add(self._oop_text, text="OOP Strategy")
-        nb.add(self._ip_text, text="IP Strategy")
+        nb.add(self._oop_viewer, text="OOP Visual")
+        nb.add(self._ip_viewer, text="IP Visual")
+        nb.add(self._oop_text, text="OOP Table")
+        nb.add(self._ip_text, text="IP Table")
 
     # ── Board selector ──
 
@@ -163,6 +168,12 @@ class App(tk.Tk):
         self._show_strategy(self._oop_text, Player.OOP, "OOP")
         self._show_strategy(self._ip_text, Player.IP, "IP")
 
+        # Feed visual strategy viewers
+        oop_spots = self._build_spot_data(Player.OOP)
+        ip_spots = self._build_spot_data(Player.IP)
+        self._oop_viewer.set_data(oop_spots)
+        self._ip_viewer.set_data(ip_spots)
+
     # ── Display strategy ──
 
     def _show_strategy(self, text_widget, player, label):
@@ -233,6 +244,59 @@ class App(tk.Tk):
         text_widget.delete("1.0", "end")
         text_widget.insert("1.0", "\n".join(lines))
         text_widget.config(state="disabled")
+
+    def _build_spot_data(self, player) -> list[dict]:
+        """Build structured spot data for the visual strategy viewer."""
+        from collections import defaultdict
+
+        solver = self._solver
+        board = self._board
+        rng = solver.oop_range if player == Player.OOP else solver.ip_range
+        strategies = solver.get_strategy(player)
+        if not strategies:
+            return []
+
+        by_history: dict[str, dict] = defaultdict(dict)
+        for key, strat in strategies.items():
+            hand_str, hist = key.split("@", 1)
+            by_history[hist][hand_str] = strat
+
+        spots = []
+        for hist in sorted(by_history, key=lambda h: (0, "") if h == "root" else (1, h)):
+            entries = by_history[hist]
+            first = next(iter(entries.values()))
+            action_names = list(first.keys())
+
+            group_count: dict[str, int] = defaultdict(int)
+            group_strat_sum: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
+            for hand in rng:
+                hs = hand_to_str(hand)
+                if hs not in entries:
+                    continue
+                abstract = abstract_hand_name(hand, board)
+                strat = entries[hs]
+                group_count[abstract] += 1
+                for a in action_names:
+                    group_strat_sum[abstract][a] += strat.get(a, 0)
+
+            if not group_count:
+                continue
+
+            hands = []
+            for ab in group_count:
+                n = group_count[ab]
+                avg = {a: group_strat_sum[ab][a] / n for a in action_names}
+                hands.append({"hand": ab, "combos": n, "strategy": avg})
+
+            spots.append({
+                "history": hist,
+                "label": history_label(hist),
+                "actions": action_names,
+                "hands": hands,
+            })
+
+        return spots
 
 
 def main():

@@ -39,6 +39,66 @@ _FALLBACK_PALETTE = [
 COLOR_EMPTY = "#2b2b2b"
 COLOR_GRID_BG = "#1a1a1a"
 
+# ── Tree layout constants ──
+TNODE_W = 50
+TNODE_H = 18
+TH_GAP = 6
+TV_GAP = 22
+TPAD = 10
+TREE_H = 130
+COLOR_TREE_BG = "#1e1e1e"
+
+
+def _split_history(history: str) -> list[str]:
+    """Split history string into individual action tokens."""
+    if not history or history == "root":
+        return []
+    tokens = []
+    i = 0
+    while i < len(history):
+        if history[i] in ('x', 'f', 'c', '|'):
+            tokens.append(history[i])
+            i += 1
+        elif history[i] in ('b', 'r'):
+            j = i + 1
+            while j < len(history) and (history[j].isdigit() or history[j] == '.'):
+                j += 1
+            tokens.append(history[i:j])
+            i = j
+        else:
+            i += 1
+    return tokens
+
+
+def _node_label(token: str) -> str:
+    """Short label for a tree node."""
+    if token == 'x':
+        return 'Chk'
+    if token == 'f':
+        return 'Fold'
+    if token == 'c':
+        return 'Call'
+    if token == '|':
+        return '▸'
+    if token.startswith('b'):
+        return f'B{token[1:]}'
+    if token.startswith('r'):
+        return f'R{token[1:]}'
+    return token
+
+
+class _TreeNode:
+    """Node in the spot trie used for graphical tree layout."""
+    __slots__ = ('children', 'spot_idx', 'label', 'x', 'y', 'width')
+
+    def __init__(self, label: str = ""):
+        self.children: dict[str, '_TreeNode'] = {}
+        self.spot_idx: int | None = None
+        self.label = label
+        self.x = 0.0
+        self.y = 0.0
+        self.width = 0.0
+
 
 def _cell_label(row: int, col: int) -> str:
     if row == col:
@@ -131,16 +191,20 @@ class StrategyViewer(ttk.Frame):
         self._build_ui()
 
     def _build_ui(self):
-        # Top bar: spot selector
-        top = ttk.Frame(self)
-        top.pack(fill="x", pady=(0, 4))
+        # Tree frame (graphical game tree replaces combobox selector)
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill="x", pady=(0, 4))
 
-        ttk.Label(top, text="Spot:").pack(side="left")
-        self._spot_var = tk.StringVar()
-        self._spot_combo = ttk.Combobox(
-            top, textvariable=self._spot_var, state="readonly", width=40)
-        self._spot_combo.pack(side="left", padx=4)
-        self._spot_combo.bind("<<ComboboxSelected>>", self._on_spot_change)
+        self._tree_canvas = tk.Canvas(
+            tree_frame, height=TREE_H, bg=COLOR_TREE_BG, highlightthickness=0)
+        self._tree_xscroll = ttk.Scrollbar(
+            tree_frame, orient="horizontal", command=self._tree_canvas.xview)
+        self._tree_canvas.configure(xscrollcommand=self._tree_xscroll.set)
+        self._tree_canvas.pack(fill="x", side="top")
+        self._tree_xscroll.pack(fill="x", side="top")
+        self._tree_canvas.bind("<Button-1>", self._on_tree_click)
+        self._tree_root: _TreeNode | None = None
+        self._tree_spot_items: dict[int, int] = {}  # canvas item id -> spot idx
 
         # Canvas
         grid_size = 13 * CELL_SIZE
@@ -187,22 +251,135 @@ class StrategyViewer(ttk.Frame):
         """Load strategy data (list of spot dicts from solver output)."""
         self._spots = spots
         if not spots:
-            self._spot_combo["values"] = []
-            self._spot_var.set("")
+            self._tree_root = None
+            self._tree_canvas.delete("all")
             self._clear_grid()
             return
 
-        labels = [s["label"] for s in spots]
-        self._spot_combo["values"] = labels
-        self._spot_var.set(labels[0])
+        self._tree_root = self._build_spot_tree()
         self._current_spot = 0
+        self._draw_tree()
         self._draw_spot(0)
 
-    def _on_spot_change(self, _event):
-        idx = self._spot_combo.current()
-        if idx >= 0:
-            self._current_spot = idx
-            self._draw_spot(idx)
+    # ── Spot tree ──
+
+    def _build_spot_tree(self) -> _TreeNode:
+        """Build a trie from spot history strings."""
+        root = _TreeNode(label="Root")
+        for i, spot in enumerate(self._spots):
+            tokens = _split_history(spot["history"])
+            if not tokens:
+                root.spot_idx = i
+                continue
+            node = root
+            for t in tokens:
+                if t not in node.children:
+                    node.children[t] = _TreeNode(label=_node_label(t))
+                node = node.children[t]
+            node.spot_idx = i
+        return root
+
+    def _compute_widths(self, node: _TreeNode):
+        """Post-order: compute subtree widths for layout."""
+        if not node.children:
+            node.width = TNODE_W
+            return
+        for c in node.children.values():
+            self._compute_widths(c)
+        total = sum(c.width for c in node.children.values())
+        total += TH_GAP * max(0, len(node.children) - 1)
+        node.width = max(TNODE_W, total)
+
+    def _assign_positions(self, node: _TreeNode, left: float, top: float):
+        """Pre-order: assign x, y positions."""
+        node.x = left + node.width / 2
+        node.y = top
+        if not node.children:
+            return
+        cx = left
+        cy = top + TNODE_H + TV_GAP
+        for c in node.children.values():
+            self._assign_positions(c, cx, cy)
+            cx += c.width + TH_GAP
+
+    def _tree_depth(self, node: _TreeNode) -> int:
+        if not node.children:
+            return 1
+        return 1 + max(self._tree_depth(c) for c in node.children.values())
+
+    def _draw_tree(self):
+        """Render the spot tree on the tree canvas."""
+        canvas = self._tree_canvas
+        canvas.delete("all")
+        self._tree_spot_items = {}
+
+        if self._tree_root is None:
+            return
+
+        self._compute_widths(self._tree_root)
+        self._assign_positions(self._tree_root, TPAD, TPAD)
+        self._draw_tree_edges(self._tree_root)
+        self._draw_tree_nodes(self._tree_root)
+
+        depth = self._tree_depth(self._tree_root)
+        tw = self._tree_root.width + TPAD * 2
+        th = TPAD * 2 + depth * (TNODE_H + TV_GAP)
+        canvas.configure(scrollregion=(0, 0, tw, th))
+
+    def _draw_tree_edges(self, node: _TreeNode):
+        canvas = self._tree_canvas
+        for c in node.children.values():
+            canvas.create_line(
+                node.x, node.y + TNODE_H,
+                c.x, c.y,
+                fill="#454545", width=1)
+            self._draw_tree_edges(c)
+
+    def _draw_tree_nodes(self, node: _TreeNode):
+        canvas = self._tree_canvas
+        x1 = node.x - TNODE_W / 2
+        y1 = node.y
+        x2 = x1 + TNODE_W
+        y2 = y1 + TNODE_H
+
+        is_spot = node.spot_idx is not None
+        is_sel = is_spot and node.spot_idx == self._current_spot
+
+        if is_sel:
+            fill, outline, txt_c, lw = "#4080c0", "#70b0f0", "#ffffff", 2
+        elif is_spot:
+            fill, outline, txt_c, lw = "#2e5090", "#4a6a9c", "#dddddd", 1
+        elif node.label == "\u25b8":
+            fill, outline, txt_c, lw = "#605030", "#807050", "#ccaa66", 1
+        else:
+            fill, outline, txt_c, lw = "#363636", "#464646", "#999999", 1
+
+        tag = f"spot_{node.spot_idx}" if is_spot else ""
+        rid = canvas.create_rectangle(
+            x1, y1, x2, y2, fill=fill, outline=outline, width=lw, tags=(tag,))
+        tid = canvas.create_text(
+            node.x, node.y + TNODE_H / 2,
+            text=node.label, fill=txt_c,
+            font=("Consolas", 7, "bold"), tags=(tag,))
+
+        if is_spot:
+            self._tree_spot_items[rid] = node.spot_idx
+            self._tree_spot_items[tid] = node.spot_idx
+
+        for c in node.children.values():
+            self._draw_tree_nodes(c)
+
+    def _on_tree_click(self, event):
+        cx = self._tree_canvas.canvasx(event.x)
+        cy = self._tree_canvas.canvasy(event.y)
+        items = self._tree_canvas.find_overlapping(cx - 2, cy - 2, cx + 2, cy + 2)
+        for item in items:
+            if item in self._tree_spot_items:
+                idx = self._tree_spot_items[item]
+                self._current_spot = idx
+                self._draw_tree()
+                self._draw_spot(idx)
+                return
 
     def _clear_grid(self):
         self._cell_strat = [[None] * 13 for _ in range(13)]

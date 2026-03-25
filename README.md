@@ -1,6 +1,8 @@
-# River Poker Solver
+# Poker Solver
 
-A heads-up poker solver for the river (final street) that finds an approximate Nash equilibrium via **Counterfactual Regret Minimization (CFR)**.
+A heads-up poker solver for **flop, turn, and river** that finds an approximate Nash equilibrium via **Counterfactual Regret Minimization (CFR)**.
+
+Supports multi-street solving: on the flop and turn the solver iterates over all possible runout cards at CHANCE nodes, building full street-by-street strategies.
 
 ## Installation
 
@@ -21,13 +23,13 @@ pip install cupy-cuda11x   # CUDA 11.x
 python solver.py
 ```
 
-Runs with default parameters: board `Ah Kd 7s 3c 2h`, pot 100, stack 200, 1000 CFR iterations.
+Runs with default parameters: board `Ah Kd 7s 3c 2h` (river), pot 100, stack 200, 1000 CFR iterations.
 
 ## CLI Parameters
 
 | Flag | Default | Description |
 |---|---|---|
-| `--board` | `"Ah Kd 7s 3c 2h"` | 5 board cards separated by spaces |
+| `--board` | `"Ah Kd 7s 3c 2h"` | Board cards: 3 (flop), 4 (turn), or 5 (river) |
 | `--pot` | `100` | Pot size |
 | `--stack` | `200` | Effective stack |
 | `--oop` | `"AA,KK,QQ,AK,..."` | OOP player range |
@@ -63,9 +65,39 @@ Combine with commas: `AA,KK,AKs,QJs+,JJ-99`
 
 ## Usage Examples
 
-### 1. Standard River Cash Game Spot
+### 1. Flop Spot — Coordinated Board
 
-Typical NL200 cash game hand. Pot $50, effective stack $150. Dry board, few draws.
+3 board cards = flop mode. The solver iterates over all turn+river runouts (49 x 48 = 2352 boards). Use small ranges and fewer iterations — flop solving is computationally expensive.
+
+```bash
+python solver.py \
+  --board "Jh Ts 4d" \
+  --pot 30 --stack 100 \
+  --oop "AA,KK,QQ,JJ,TT,AK,AQ,AJ,KQ,KJ,QJ,JT" \
+  --ip "AA,KK,QQ,JJ,TT,AK,AQ,AJ,KQ,KJ,QJ,JT,T9,98" \
+  --bets "0.67" \
+  --max-raises 0 \
+  --iter 200
+```
+
+### 2. Turn Spot — Draw-Heavy
+
+4 board cards = turn mode. The solver iterates over all 48 possible river cards at CHANCE nodes. Strategies are computed for the turn action; river play is solved internally per runout.
+
+```bash
+python solver.py \
+  --board "9h 8h 3d 2c" \
+  --pot 80 --stack 200 \
+  --oop "AA,KK,QQ,JJ,TT,99,88,AhKh,AhQh,Ah5h,KQ,QJ,JT,T9s,98s,87s,76s" \
+  --ip "AA,KK,QQ,JJ,TT,99,88,AhKh,AhQh,KQ,QJ,JT,T9s,98s,87s" \
+  --bets "0.5,1.0" \
+  --raises "1.0" \
+  --iter 500
+```
+
+### 3. Standard River Cash Game Spot
+
+5 board cards = river mode. Single-board evaluation, fastest to solve.
 
 ```bash
 python solver.py \
@@ -77,7 +109,7 @@ python solver.py \
   --iter 20000
 ```
 
-### 2. Large Pot, Small Stack (SPR < 1)
+### 4. Large Pot, Small Stack (SPR < 1)
 
 River after several raises on earlier streets. Less than a pot-size stack remaining — often an all-in situation.
 
@@ -91,7 +123,7 @@ python solver.py \
   --iter 1000
 ```
 
-### 3. Wet Board with Completed Draws
+### 5. Wet Board with Completed Draws (River)
 
 Board with flush and straight possibilities. Many nut hands and semi-bluffs.
 
@@ -106,7 +138,7 @@ python solver.py \
   --iter 3000
 ```
 
-### 4. Pot-Size Bet Only (Simplified Tree)
+### 6. Pot-Size Bet Only (Simplified Tree)
 
 For quick analysis or studying theory. Single bet = pot size, no raises — fast convergence.
 
@@ -121,7 +153,7 @@ python solver.py \
   --iter 500
 ```
 
-### 5. Polarized Range vs Bluff-Catchers
+### 7. Polarized Range vs Bluff-Catchers
 
 OOP bets or checks on the river. They have only nuts and complete air; IP has medium-strength hands.
 
@@ -136,7 +168,7 @@ python solver.py \
   --iter 2000
 ```
 
-### 6. Tournament Spot (Short Stack)
+### 8. Tournament Spot (Short Stack)
 
 Final table, effective stack 15 BB, pot already bloated.
 
@@ -151,7 +183,7 @@ python solver.py \
   --iter 1000
 ```
 
-### 7. River Overbet (2x+ Pot)
+### 9. River Overbet (2x+ Pot)
 
 Deep stacks. See which hands use the overbet.
 
@@ -166,7 +198,7 @@ python solver.py \
   --iter 3000
 ```
 
-### 8. GPU Acceleration for Large Ranges
+### 10. GPU Acceleration for Large Ranges
 
 Full ranges with many bet sizes. GPU provides speedup with 300+ combos.
 
@@ -222,23 +254,35 @@ Exploitability measures how far the strategy is from Nash equilibrium (in chips 
 ## Architecture
 
 ```
-poker-solver/
+poker_solver/
   card.py           # Card, parse_cards(), full_deck()
   evaluator.py      # evaluate(hole, board) -> rank
   range_parser.py   # parse_range("AA,AKs,JJ+") -> [(Card, Card), ...]
-  game_tree.py      # build_river_tree() -> GameNode tree
+  game_tree.py      # build_tree(street, ...) -> GameNode tree (flop/turn/river)
   cfr.py            # CFRSolver -- vectorized CFR (NumPy / CuPy)
+  utils.py          # abstract_hand_name(), history_label()
   solver.py         # CLI entry point
 ```
 
 ### Algorithm
 
-1. **Game tree construction** — all possible action sequences on the river (check, bet, call, fold, raise)
-2. **Matrix precomputation** — validity matrix (cards don't overlap) and showdown result matrix
+1. **Game tree construction** — action sequences (check, bet, call, fold, raise) per street. On the flop/turn, completed betting rounds create CHANCE nodes that transition to the next street's action tree.
+2. **Matrix precomputation** — validity matrix (cards don't overlap) and showdown result matrices. On the turn, 48 river runout matrices are precomputed. On the flop, 49 x 48 = 2352 turn+river runout matrices are precomputed.
 3. **CFR iterations** — at each iteration for every tree node:
    - Compute current strategy via regret matching
+   - At CHANCE nodes, iterate over all possible next cards and average the counterfactual values
    - Recursive traversal with reach probability matrices
    - Update regrets as the difference between a specific action's value and the average value
 4. **Average strategy** — averaging strategies across all iterations converges to Nash equilibrium
 
 All operations are vectorized via NumPy/CuPy: instead of looping over every hand pair (O(n^2) Python calls), matrix multiplications are used.
+
+### Street Complexity
+
+| Street | Board Cards | Runouts | Relative Speed |
+|---|---|---|---|
+| River | 5 | 1 | Fastest |
+| Turn | 4 | 48 river cards | ~48x slower |
+| Flop | 3 | 49 x 48 = 2352 boards | ~2352x slower |
+
+For flop solving, use small ranges and fewer iterations. Turn solving is practical with moderate ranges.

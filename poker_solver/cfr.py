@@ -222,13 +222,18 @@ class CFRSolver:
         total = s.sum(axis=1, keepdims=True)
         return xp.where(total > 0, s / xp.maximum(total, 1e-30), 1.0 / n_actions)
 
-    def train(self, iterations: int, verbose: bool = True) -> None:
+    def train(self, iterations: int, verbose: bool = True,
+              progress_cb=None) -> None:
         """Run vectorized CFR for the given number of iterations."""
         xp = self.xp
+        report_every = max(1, iterations // 100)
         for t in range(1, iterations + 1):
             reach_oop = xp.ones(self.n_oop, dtype=xp.float32)
             reach_ip = xp.ones(self.n_ip, dtype=xp.float32)
             self._cfr(self.tree, reach_oop, reach_ip)
+
+            if progress_cb and t % report_every == 0:
+                progress_cb(t, iterations)
 
             if verbose and t % max(1, iterations // 10) == 0:
                 expl = self.exploitability()

@@ -141,9 +141,15 @@ class App(tk.Tk):
         def worker():
             try:
                 tree = build_tree(street, pot, stack, bet_sizes, raise_sizes, max_raises=1)
-                self.after(0, lambda: self._progress.config(text="Running CFR..."))
+                self.after(0, lambda: self._progress.config(text="Running CFR... 0%"))
                 solver = CFRSolver(tree, board, oop_range, ip_range)
-                solver.train(iterations, verbose=False)
+
+                def on_progress(t, total):
+                    pct = t * 100 // total
+                    self.after(0, lambda p=pct: self._progress.config(
+                        text=f"Running CFR... {p}%"))
+
+                solver.train(iterations, verbose=False, progress_cb=on_progress)
                 self._solver = solver
                 self.after(0, self._on_done)
             except Exception as e:

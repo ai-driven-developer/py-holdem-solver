@@ -78,12 +78,10 @@ class App(tk.Tk):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
-        self._oop_viewer = StrategyViewer(nb)
-        self._ip_viewer = StrategyViewer(nb)
+        self._viewer = StrategyViewer(nb)
         self._oop_text = scrolledtext.ScrolledText(nb, font=("Consolas", 10), state="disabled")
         self._ip_text = scrolledtext.ScrolledText(nb, font=("Consolas", 10), state="disabled")
-        nb.add(self._oop_viewer, text="OOP Visual")
-        nb.add(self._ip_viewer, text="IP Visual")
+        nb.add(self._viewer, text="Visual")
         nb.add(self._oop_text, text="OOP Table")
         nb.add(self._ip_text, text="IP Table")
 
@@ -168,11 +166,10 @@ class App(tk.Tk):
         self._show_strategy(self._oop_text, Player.OOP, "OOP")
         self._show_strategy(self._ip_text, Player.IP, "IP")
 
-        # Feed visual strategy viewers
+        # Feed unified visual strategy viewer
         oop_spots = self._build_spot_data(Player.OOP)
         ip_spots = self._build_spot_data(Player.IP)
-        self._oop_viewer.set_data(oop_spots)
-        self._ip_viewer.set_data(ip_spots)
+        self._viewer.set_data(oop_spots, ip_spots)
 
     # ── Display strategy ──
 

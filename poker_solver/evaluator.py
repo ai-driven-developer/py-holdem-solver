@@ -63,8 +63,14 @@ def _eval5(ranks: list[int], suits: list[int]) -> int:
             else:
                 pair2 = r
 
+    # Sub-rank encoding: invert ranks so that higher cards produce lower
+    # (=stronger) scores, consistent with the "lower rank = stronger hand"
+    # convention used by the rest of the system.
+    def _inv(r):
+        return 12 - r
+
     if is_straight and is_flush:
-        return STRAIGHT_FLUSH * 10_000_000 + straight_high
+        return STRAIGHT_FLUSH * 10_000_000 + _inv(straight_high)
 
     if quads >= 0:
         kicker = -1
@@ -72,18 +78,18 @@ def _eval5(ranks: list[int], suits: list[int]) -> int:
             if counts[r] > 0 and r != quads:
                 kicker = r
                 break
-        return FOUR_OF_A_KIND * 10_000_000 + quads * 100 + kicker
+        return FOUR_OF_A_KIND * 10_000_000 + _inv(quads) * 100 + _inv(kicker)
 
     if trips >= 0 and pair1 >= 0:
-        return FULL_HOUSE * 10_000_000 + trips * 100 + pair1
+        return FULL_HOUSE * 10_000_000 + _inv(trips) * 100 + _inv(pair1)
 
     if is_flush:
         sr = sorted(ranks, reverse=True)
-        val = sr[0] * 50625 + sr[1] * 3375 + sr[2] * 225 + sr[3] * 15 + sr[4]
+        val = _inv(sr[0]) * 50625 + _inv(sr[1]) * 3375 + _inv(sr[2]) * 225 + _inv(sr[3]) * 15 + _inv(sr[4])
         return FLUSH * 10_000_000 + val
 
     if is_straight:
-        return STRAIGHT * 10_000_000 + straight_high
+        return STRAIGHT * 10_000_000 + _inv(straight_high)
 
     if trips >= 0:
         kickers = []
@@ -92,7 +98,7 @@ def _eval5(ranks: list[int], suits: list[int]) -> int:
                 kickers.append(r)
                 if len(kickers) == 2:
                     break
-        return THREE_OF_A_KIND * 10_000_000 + trips * 10000 + kickers[0] * 100 + kickers[1]
+        return THREE_OF_A_KIND * 10_000_000 + _inv(trips) * 10000 + _inv(kickers[0]) * 100 + _inv(kickers[1])
 
     if pair1 >= 0 and pair2 >= 0:
         kicker = -1
@@ -100,7 +106,7 @@ def _eval5(ranks: list[int], suits: list[int]) -> int:
             if counts[r] > 0 and r != pair1 and r != pair2:
                 kicker = r
                 break
-        return TWO_PAIR * 10_000_000 + pair1 * 10000 + pair2 * 100 + kicker
+        return TWO_PAIR * 10_000_000 + _inv(pair1) * 10000 + _inv(pair2) * 100 + _inv(kicker)
 
     if pair1 >= 0:
         kickers = []
@@ -109,11 +115,11 @@ def _eval5(ranks: list[int], suits: list[int]) -> int:
                 kickers.append(r)
                 if len(kickers) == 3:
                     break
-        return ONE_PAIR * 10_000_000 + pair1 * 3375 + kickers[0] * 225 + kickers[1] * 15 + kickers[2]
+        return ONE_PAIR * 10_000_000 + _inv(pair1) * 3375 + _inv(kickers[0]) * 225 + _inv(kickers[1]) * 15 + _inv(kickers[2])
 
     # High card
     sr = sorted(ranks, reverse=True)
-    val = sr[0] * 50625 + sr[1] * 3375 + sr[2] * 225 + sr[3] * 15 + sr[4]
+    val = _inv(sr[0]) * 50625 + _inv(sr[1]) * 3375 + _inv(sr[2]) * 225 + _inv(sr[3]) * 15 + _inv(sr[4])
     return HIGH_CARD * 10_000_000 + val
 
 

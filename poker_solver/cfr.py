@@ -308,9 +308,12 @@ class CFRSolver:
 
         # ── Terminal: fold ──
         if node.node_type == NodeType.TERMINAL_FOLD:
-            half_pot = node.pot / 2.0
-            sign = 1.0 if node.folded_player == Player.IP else -1.0
-            m = self.valid * (sign * half_pot)
+            s_oop, s_ip = node.stacks
+            if node.folded_player == Player.IP:
+                payoff_oop = (node.pot + s_oop - s_ip) / 2.0
+            else:
+                payoff_oop = -(node.pot + s_ip - s_oop) / 2.0
+            m = self.valid * payoff_oop
             cf_oop = m @ reach_ip
             cf_ip = -(m.T @ reach_oop)
             return cf_oop, cf_ip
@@ -433,13 +436,15 @@ class CFRSolver:
                 return -(self.valid_result * half_pot).T @ opp_reach
 
         if node.node_type == NodeType.TERMINAL_FOLD:
-            half_pot = node.pot / 2.0
-            if is_br_oop:
-                sign = 1.0 if node.folded_player == Player.IP else -1.0
-                return (self.valid * sign * half_pot) @ opp_reach
+            s_oop, s_ip = node.stacks
+            if node.folded_player == Player.IP:
+                payoff_oop = (node.pot + s_oop - s_ip) / 2.0
             else:
-                sign = 1.0 if node.folded_player == Player.OOP else -1.0
-                return (self.valid * sign * half_pot).T @ opp_reach
+                payoff_oop = -(node.pot + s_ip - s_oop) / 2.0
+            if is_br_oop:
+                return (self.valid * payoff_oop) @ opp_reach
+            else:
+                return -(self.valid * payoff_oop).T @ opp_reach
 
         player = node.player
         n_actions = len(node.actions)

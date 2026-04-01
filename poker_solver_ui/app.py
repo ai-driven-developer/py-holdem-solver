@@ -144,10 +144,17 @@ class App(tk.Tk):
                 self.after(0, lambda: self._progress.config(text="Running CFR... 0%"))
                 solver = CFRSolver(tree, board, oop_range, ip_range)
 
-                def on_progress(t, total):
+                last_expl = [None]
+
+                def on_progress(t, total, expl):
                     pct = t * 100 // total
-                    self.after(0, lambda p=pct: self._progress.config(
-                        text=f"Running CFR... {p}%"))
+                    if expl is not None:
+                        last_expl[0] = expl
+                    if last_expl[0] is not None:
+                        txt = f"Running CFR... {pct}%  |  Exploitability: {last_expl[0]:.4f} % pot"
+                    else:
+                        txt = f"Running CFR... {pct}%"
+                    self.after(0, lambda t=txt: self._progress.config(text=t))
 
                 solver.train(iterations, verbose=False, progress_cb=on_progress)
                 self._solver = solver
@@ -167,7 +174,7 @@ class App(tk.Tk):
         self._running = False
         self._solve_btn.config(state="normal")
         expl = self._solver.exploitability()
-        self._progress.config(text=f"Done. Exploitability: {expl:.4f}")
+        self._progress.config(text=f"Done. Exploitability: {expl:.4f} % pot")
 
         self._show_strategy(self._oop_text, Player.OOP, "OOP")
         self._show_strategy(self._ip_text, Player.IP, "IP")

@@ -232,12 +232,15 @@ class CFRSolver:
             reach_ip = xp.ones(self.n_ip, dtype=xp.float32)
             self._cfr(self.tree, reach_oop, reach_ip)
 
-            if progress_cb and t % report_every == 0:
-                progress_cb(t, iterations)
-
-            if verbose and t % max(1, iterations // 10) == 0:
+            expl_every = max(1, iterations // 10)
+            if t % expl_every == 0:
                 expl = self.exploitability()
-                print(f"  Iteration {t}/{iterations}, exploitability: {expl:.4f}")
+                if verbose:
+                    print(f"  Iteration {t}/{iterations}, exploitability: {expl:.4f}")
+                if progress_cb:
+                    progress_cb(t, iterations, expl)
+            elif progress_cb and t % report_every == 0:
+                progress_cb(t, iterations, None)
 
     def _cfr(self, node, reach_oop, reach_ip):
         """Vectorized CFR traversal.

@@ -19,7 +19,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Poker Solver")
-        self.geometry("960x780")
+        self.geometry("960x960")
         self.resizable(True, True)
 
         self._solver = None

@@ -1,4 +1,4 @@
-"""Unified visual strategy viewer — GTO+-style top-down tree + 13×13 strategy grid."""
+"""Unified visual strategy viewer — GTO+-style left-to-right tree above 13×13 strategy grid."""
 
 import tkinter as tk
 from tkinter import ttk
@@ -37,19 +37,20 @@ _FALLBACK_PALETTE = [
 COLOR_EMPTY = "#2b2b2b"
 COLOR_GRID_BG = "#1a1a1a"
 
-# ── Tree layout constants (top-down, GTO+ style) ──
-TNODE_W = 64
-TNODE_H = 28
+# ── Tree layout constants (left-to-right, GTO+ style) ──
+TNODE_H = 26
 TNODE_R = 4          # corner radius
-TV_GAP = 32          # vertical gap between levels
-TH_GAP = 6           # horizontal gap between siblings
-TPAD = 12
+TH_GAP = 24          # horizontal gap between depth levels
+TV_GAP = 4           # vertical gap between siblings
+TPAD = 10
+TFONT = ("Segoe UI", 9)
+TFONT_BOLD = ("Segoe UI", 9, "bold")
 COLOR_TREE_BG = "#1e1e1e"
 COLOR_EDGE = "#555555"
 COLOR_ROOT_BG = "#3d3d3d"
 COLOR_ROOT_BORDER = "#666666"
 
-# Player badge colors (small indicators, not full node fill)
+# Player badge colors
 COLOR_OOP_BADGE = "#ef5350"
 COLOR_IP_BADGE = "#42a5f5"
 
@@ -95,18 +96,17 @@ def _node_label(token: str) -> str:
 class _TreeNode:
     """Node in the unified game-tree trie for graphical layout."""
     __slots__ = ('children', 'spot_idx', 'player', 'label', 'token',
-                 'x', 'y', 'width', 'subtree_width', 'expanded', 'action_pct')
+                 'x', 'y', 'height', 'expanded', 'action_pct')
 
     def __init__(self, label: str = "", token: str = ""):
         self.children: dict[str, '_TreeNode'] = {}
         self.spot_idx: int | None = None
-        self.player: str = ""          # "OOP" or "IP"
+        self.player: str = ""
         self.label = label
         self.token = token
         self.x = 0.0
         self.y = 0.0
-        self.width = TNODE_W
-        self.subtree_width = 0.0
+        self.height = 0.0
         self.expanded = False
         self.action_pct: float | None = None
 
@@ -121,7 +121,6 @@ def _cell_label(row: int, col: int) -> str:
 
 
 def _hand_to_cell(hand: str) -> tuple[int, int] | None:
-    """Map abstract hand name to (row, col)."""
     rank_idx = {c: i for i, c in enumerate(RANKS)}
     if len(hand) < 2:
         return None
@@ -148,7 +147,6 @@ def _get_node_color(token: str) -> str:
         return COLOR_ROOT_BG
     if token in ACTION_COLORS:
         return ACTION_COLORS[token]
-    # Try to match by prefix + size interpolation
     if token.startswith('b') or token.startswith('r'):
         prefix = token[0]
         try:
@@ -222,7 +220,6 @@ def _assign_colors(actions: list[str]) -> dict[str, str]:
 
 
 def _action_label(action: str) -> str:
-    """Human-readable action label."""
     if action == "x":
         return "Check"
     if action == "f":
@@ -236,13 +233,17 @@ def _action_label(action: str) -> str:
     return action
 
 
-def _measure_text_width(text: str, font_size: int = 8) -> int:
-    """Estimate text width in pixels for a monospace font."""
-    return len(text) * (font_size * 0.65) + 16
+def _text_needs_dark(hex_color: str) -> bool:
+    """Return True if black text is more readable on this background."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return luminance > 160
 
 
 class StrategyViewer(ttk.Frame):
-    """Unified strategy viewer: GTO+-style top-down game tree + 13x13 grid below."""
+    """Unified strategy viewer: GTO+-style left-to-right game tree above 13x13 grid."""
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
@@ -254,8 +255,15 @@ class StrategyViewer(ttk.Frame):
         self._cell_strat: list[list[dict | None]] = [[None] * 13 for _ in range(13)]
         self._tree_root: _TreeNode | None = None
         self._tree_node_items: dict[int, _TreeNode] = {}
+        self._measure_font: tk.Font | None = None
 
         self._build_ui()
+
+    def _get_font(self):
+        if self._measure_font is None:
+            import tkinter.font as tkfont
+            self._measure_font = tkfont.Font(family="Segoe UI", size=9)
+        return self._measure_font
 
     def _build_ui(self):
         self.rowconfigure(0, weight=1)    # tree takes available space
@@ -296,19 +304,16 @@ class StrategyViewer(ttk.Frame):
         bottom_frame = ttk.Frame(self)
         bottom_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
-        # Player / spot label
         self._player_label = ttk.Label(
             bottom_frame, text="", font=("Consolas", 10, "bold"))
         self._player_label.pack(pady=(4, 2))
 
-        # Grid canvas
         grid_size = 13 * CELL_SIZE
         self._canvas = tk.Canvas(
             bottom_frame, width=grid_size, height=grid_size,
             bg=COLOR_GRID_BG, highlightthickness=0)
         self._canvas.pack(padx=4, pady=4)
 
-        # Pre-create cell items
         self._cell_rects: list[list[list[int]]] = [[[] for _ in range(13)] for _ in range(13)]
         self._cell_texts: list[list[int]] = [[0] * 13 for _ in range(13)]
 
@@ -326,7 +331,6 @@ class StrategyViewer(ttk.Frame):
                     font=("Consolas", 8, "bold"))
                 self._cell_texts[r][c] = txt
 
-        # Tooltip
         self._tooltip = tk.Toplevel(self)
         self._tooltip.wm_overrideredirect(True)
         self._tooltip.withdraw()
@@ -338,14 +342,12 @@ class StrategyViewer(ttk.Frame):
         self._canvas.bind("<Motion>", self._on_motion)
         self._canvas.bind("<Leave>", self._on_leave)
 
-        # Legend frame
         self._legend_frame = ttk.Frame(bottom_frame)
         self._legend_frame.pack(fill="x", padx=4, pady=(4, 0))
 
     # ── Public API ──
 
     def set_data(self, oop_spots: list[dict], ip_spots: list[dict]):
-        """Load strategy data for both players and build unified tree."""
         self._oop_spots = oop_spots
         self._ip_spots = ip_spots
 
@@ -360,13 +362,11 @@ class StrategyViewer(ttk.Frame):
         self._tree_root = self._build_unified_tree()
         self._compute_action_pcts(self._tree_root)
 
-        # Expand root by default
         self._tree_root.expanded = True
         self._current_node = self._tree_root
 
         self._draw_tree()
 
-        # Show root spot grid if it's a decision point
         if self._tree_root.spot_idx is not None:
             self._show_node_grid(self._tree_root)
         else:
@@ -376,7 +376,6 @@ class StrategyViewer(ttk.Frame):
     # ── Unified tree construction ──
 
     def _build_unified_tree(self) -> _TreeNode:
-        """Build a trie from both OOP and IP spot history strings."""
         root = _TreeNode(label="Root", token="")
 
         for i, spot in enumerate(self._oop_spots):
@@ -410,7 +409,6 @@ class StrategyViewer(ttk.Frame):
         return root
 
     def _compute_action_pcts(self, node: _TreeNode):
-        """Compute aggregate action percentages and assign to children nodes."""
         if node.spot_idx is not None and node.children:
             spots = self._oop_spots if node.player == "OOP" else self._ip_spots
             spot = spots[node.spot_idx]
@@ -426,47 +424,54 @@ class StrategyViewer(ttk.Frame):
         for c in node.children.values():
             self._compute_action_pcts(c)
 
-    # ── Tree layout (top-down, GTO+ style) ──
+    # ── Tree layout (left-to-right, GTO+ style) ──
 
-    def _measure_node_width(self, node: _TreeNode) -> int:
-        """Compute the pixel width needed for a node based on its label."""
+    def _node_display_text(self, node: _TreeNode) -> str:
+        """Build the display string for a node."""
         text = node.label
         if node.action_pct is not None:
-            text += f" {node.action_pct * 100:.0f}%"
-        return max(TNODE_W, int(_measure_text_width(text, 8)))
+            pct = node.action_pct * 100
+            text += f"  {pct:.0f}%"
+        return text
 
-    def _compute_subtree_widths(self, node: _TreeNode):
-        """Post-order: compute subtree width for horizontal spread."""
-        node.width = self._measure_node_width(node)
+    def _measure_node_width(self, node: _TreeNode) -> int:
+        """Compute pixel width needed for a node label + padding."""
+        text = self._node_display_text(node)
+        try:
+            font = self._get_font()
+            tw = font.measure(text)
+        except Exception:
+            tw = len(text) * 7
+        return tw + 20  # padding
+
+    def _compute_heights(self, node: _TreeNode):
+        """Post-order: compute subtree height for vertical spread."""
         if not node.children or not node.expanded:
-            node.subtree_width = node.width
+            node.height = TNODE_H
             return
         for c in node.children.values():
-            self._compute_subtree_widths(c)
-        children_width = sum(c.subtree_width for c in node.children.values())
-        children_width += TH_GAP * max(0, len(node.children) - 1)
-        node.subtree_width = max(node.width, children_width)
+            self._compute_heights(c)
+        total = sum(c.height for c in node.children.values())
+        total += TV_GAP * max(0, len(node.children) - 1)
+        node.height = max(TNODE_H, total)
 
-    def _assign_positions(self, node: _TreeNode, cx: float, top: float):
-        """Pre-order: assign positions. cx is the center x of the subtree."""
-        node.x = cx - node.width / 2
-        node.y = top
+    def _assign_positions(self, node: _TreeNode, left: float, top: float):
+        """Pre-order: assign x (left edge), y (vertical center)."""
+        node.x = left
+        node.y = top + node.height / 2
         if not node.children or not node.expanded:
             return
-        # Distribute children horizontally, centered under this node
-        children = list(node.children.values())
-        total_w = sum(c.subtree_width for c in children) + TH_GAP * max(0, len(children) - 1)
-        child_left = cx - total_w / 2
-        child_top = top + TNODE_H + TV_GAP
-        for c in children:
-            child_cx = child_left + c.subtree_width / 2
-            self._assign_positions(c, child_cx, child_top)
-            child_left += c.subtree_width + TH_GAP
+        nw = self._measure_node_width(node)
+        cx = left + nw + TH_GAP
+        cy = top
+        for c in node.children.values():
+            self._assign_positions(c, cx, cy)
+            cy += c.height + TV_GAP
 
     def _tree_bounds(self, node: _TreeNode) -> tuple[float, float]:
-        """Compute max x, max y of the visible tree."""
-        max_x = node.x + node.width
-        max_y = node.y + TNODE_H
+        nw = self._measure_node_width(node)
+        max_x = node.x + nw
+        max_y = node.y + TNODE_H / 2
         if node.expanded:
             for c in node.children.values():
                 cx, cy = self._tree_bounds(c)
@@ -474,16 +479,7 @@ class StrategyViewer(ttk.Frame):
                 max_y = max(max_y, cy)
         return max_x, max_y
 
-    def _tree_min_x(self, node: _TreeNode) -> float:
-        """Compute min x of the visible tree."""
-        min_x = node.x
-        if node.expanded:
-            for c in node.children.values():
-                min_x = min(min_x, self._tree_min_x(c))
-        return min_x
-
     def _draw_tree(self):
-        """Render the full visible tree on the tree canvas."""
         canvas = self._tree_canvas
         canvas.delete("all")
         self._tree_node_items = {}
@@ -491,85 +487,67 @@ class StrategyViewer(ttk.Frame):
         if self._tree_root is None:
             return
 
-        self._compute_subtree_widths(self._tree_root)
-
-        # Center the tree horizontally in the canvas
-        canvas_w = max(canvas.winfo_width(), 400)
-        cx = max(canvas_w / 2, self._tree_root.subtree_width / 2 + TPAD)
-        self._assign_positions(self._tree_root, cx, TPAD)
-
-        # Shift everything so min_x >= TPAD
-        min_x = self._tree_min_x(self._tree_root)
-        if min_x < TPAD:
-            self._shift_tree(self._tree_root, TPAD - min_x)
-
+        self._compute_heights(self._tree_root)
+        self._assign_positions(self._tree_root, TPAD, TPAD)
         self._draw_tree_edges(self._tree_root)
         self._draw_tree_nodes(self._tree_root)
 
         max_x, max_y = self._tree_bounds(self._tree_root)
         canvas.configure(scrollregion=(0, 0, max_x + TPAD, max_y + TPAD))
 
-    def _shift_tree(self, node: _TreeNode, dx: float):
-        """Shift all node positions by dx."""
-        node.x += dx
-        if node.expanded:
-            for c in node.children.values():
-                self._shift_tree(c, dx)
-
     def _draw_tree_edges(self, node: _TreeNode):
         if not node.expanded:
             return
         canvas = self._tree_canvas
-        parent_cx = node.x + node.width / 2
-        parent_bot = node.y + TNODE_H
+        nw = self._measure_node_width(node)
+        parent_right = node.x + nw
+        parent_cy = node.y
 
         for c in node.children.values():
-            child_cx = c.x + c.width / 2
-            child_top = c.y
-            # GTO+ style: vertical line down from parent, then horizontal, then vertical to child
-            mid_y = parent_bot + TV_GAP * 0.4
+            child_left = c.x
+            child_cy = c.y
+            # GTO+ style: horizontal from parent right, then orthogonal connector
+            mid_x = parent_right + TH_GAP * 0.5
             edge_color = _get_node_color(c.token)
+            # Horizontal stub from parent
             canvas.create_line(
-                parent_cx, parent_bot, parent_cx, mid_y,
+                parent_right, parent_cy, mid_x, parent_cy,
                 fill=COLOR_EDGE, width=1)
+            # Vertical connector
             canvas.create_line(
-                parent_cx, mid_y, child_cx, mid_y,
+                mid_x, parent_cy, mid_x, child_cy,
                 fill=COLOR_EDGE, width=1)
+            # Horizontal into child, colored
             canvas.create_line(
-                child_cx, mid_y, child_cx, child_top,
+                mid_x, child_cy, child_left, child_cy,
                 fill=edge_color, width=2)
             self._draw_tree_edges(c)
 
     def _draw_tree_nodes(self, node: _TreeNode):
         canvas = self._tree_canvas
+        nw = self._measure_node_width(node)
         x1 = node.x
-        y1 = node.y
-        x2 = x1 + node.width
+        y1 = node.y - TNODE_H / 2
+        x2 = x1 + nw
         y2 = y1 + TNODE_H
 
         is_sel = (node is self._current_node)
-        has_children = bool(node.children)
 
-        # GTO+ style: color based on action type, not player
+        # GTO+ style: color by action
         if not node.token:
-            # Root node
             fill = "#505050" if not is_sel else "#707070"
             outline = COLOR_ROOT_BORDER
         else:
             fill = _get_node_color(node.token)
-            # Brighten if selected
             if is_sel:
                 fill = self._brighten(fill, 0.3)
-            outline = self._darken(fill, 0.2)
+            outline = self._darken(fill, 0.3)
 
-        txt_c = "#ffffff"
+        # Text color: dark on bright backgrounds, white on dark
+        txt_c = "#1a1a1a" if _text_needs_dark(fill) else "#ffffff"
         lw = 2 if is_sel else 1
 
-        # Build display text
-        display = node.label
-        if node.action_pct is not None:
-            pct = node.action_pct * 100
-            display += f" {pct:.0f}%"
+        display = self._node_display_text(node)
 
         # Draw rounded rectangle
         r = TNODE_R
@@ -578,9 +556,9 @@ class StrategyViewer(ttk.Frame):
 
         tid = canvas.create_text(
             (x1 + x2) / 2, (y1 + y2) / 2,
-            text=display, fill=txt_c, font=("Consolas", 8, "bold"))
+            text=display, fill=txt_c, font=TFONT_BOLD)
 
-        # Player indicator — small colored dot on the left
+        # Player indicator dot
         if node.player:
             dot_color = COLOR_OOP_BADGE if node.player == "OOP" else COLOR_IP_BADGE
             dot_r = 3
@@ -589,24 +567,23 @@ class StrategyViewer(ttk.Frame):
                 x1 + 4 + dot_r * 2, (y1 + y2) / 2 + dot_r,
                 fill=dot_color, outline="")
 
-        # Expand/collapse indicator
-        if has_children:
-            indicator = "\u25bc" if node.expanded else "\u25b6"
-            canvas.create_text(
-                x2 - 8, (y1 + y2) / 2,
-                text=indicator, fill="#cccccc", font=("Consolas", 6))
+        # Expand/collapse indicator on the right
+        if node.children:
+            indicator = "\u25b6" if not node.expanded else ""
+            if not node.expanded:
+                canvas.create_text(
+                    x2 + 6, (y1 + y2) / 2,
+                    text=indicator, fill="#aaaaaa", font=("Segoe UI", 7))
 
         for item_id in rid:
             self._tree_node_items[item_id] = node
         self._tree_node_items[tid] = node
 
-        # Draw children if expanded
         if node.expanded:
             for c in node.children.values():
                 self._draw_tree_nodes(c)
 
     def _draw_rounded_rect(self, canvas, x1, y1, x2, y2, r, **kwargs):
-        """Draw a rounded rectangle, return list of item ids."""
         points = [
             x1 + r, y1,
             x2 - r, y1,
@@ -627,7 +604,6 @@ class StrategyViewer(ttk.Frame):
 
     @staticmethod
     def _brighten(hex_color: str, factor: float) -> str:
-        """Make a hex color brighter."""
         r = int(hex_color[1:3], 16)
         g = int(hex_color[3:5], 16)
         b = int(hex_color[5:7], 16)
@@ -638,7 +614,6 @@ class StrategyViewer(ttk.Frame):
 
     @staticmethod
     def _darken(hex_color: str, factor: float) -> str:
-        """Make a hex color darker."""
         r = int(hex_color[1:3], 16)
         g = int(hex_color[3:5], 16)
         b = int(hex_color[5:7], 16)
@@ -678,7 +653,6 @@ class StrategyViewer(ttk.Frame):
     # ── Grid display ──
 
     def _show_node_grid(self, node: _TreeNode):
-        """Show the 13x13 strategy grid for the given tree node."""
         spots = self._oop_spots if node.player == "OOP" else self._ip_spots
         spot = spots[node.spot_idx]
         actions = spot["actions"]
@@ -716,7 +690,6 @@ class StrategyViewer(ttk.Frame):
                 self._canvas.tag_raise(self._cell_texts[r][c])
 
     def _draw_cell(self, r: int, c: int, strat: dict, actions: list[str]):
-        """Draw colored horizontal bands in a cell proportional to action freqs."""
         x1, y1 = c * CELL_SIZE, r * CELL_SIZE
         x2 = x1 + CELL_SIZE - 1
         cell_h = CELL_SIZE - 1

@@ -406,7 +406,25 @@ class StrategyViewer(ttk.Frame):
             node.spot_idx = i
             node.player = "IP"
 
+        # Add terminal action nodes (Fold, Call, etc.) that don't lead to
+        # further decision points and therefore have no spots of their own.
+        self._add_terminal_children(root, self._oop_spots, self._ip_spots)
+
         return root
+
+    def _add_terminal_children(self, node: _TreeNode,
+                                oop_spots: list[dict], ip_spots: list[dict]):
+        """Ensure every decision node has children for ALL its actions,
+        including terminal ones (Fold, final Call) that have no further spots."""
+        if node.spot_idx is not None:
+            spots = oop_spots if node.player == "OOP" else ip_spots
+            spot = spots[node.spot_idx]
+            for action in spot["actions"]:
+                if action not in node.children:
+                    node.children[action] = _TreeNode(
+                        label=_node_label(action), token=action)
+        for child in node.children.values():
+            self._add_terminal_children(child, oop_spots, ip_spots)
 
     def _compute_action_pcts(self, node: _TreeNode):
         if node.spot_idx is not None and node.children:
